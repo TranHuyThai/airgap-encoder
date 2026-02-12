@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0; background:orange; padding: 10%; color:white; font-family:Arial;">
+
+<button onclick="document.getElementById('fileInput').click()">
+  Upload Files
+</button>
+<input id="fileInput" type="file" multiple style="display:none"
+       onchange="handleFiles(this.files)">
+
+<div id="fileList" style="margin-top:20px;"></div>
+
+<script>
+
+function handleFiles(files) {
+    const list = document.getElementById("fileList");
+    list.innerHTML = ""; // clear previous
+
+    for (let file of files) {
+
+        // Display filename
+        const title = document.createElement("div");
+        title.textContent = file.name;
+        title.style.marginTop = "30px";
+        list.appendChild(title);
+
+        // Container for QR
+        const container = document.createElement("div");
+        list.appendChild(container);
+
+        // Fetch grid based on filename
+        fetch('/grid?name=' + encodeURIComponent(file.name))
+          .then(res => res.json())
+          .then(data => {
+              drawQR(data, container);
+          });
+    }
+}
+
+function drawQR(data, container) {
+
+    const side = data.side;
+    const bits = data.bits;
+
+    const blockSize = 10;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    canvas.width = side * blockSize;
+    canvas.height = side * blockSize;
+
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "black";
+
+    for (let i = 0; i < bits.length; i++) {
+        if (bits[i] === '1') {
+            let row = Math.floor(i / side);
+            let col = i % side;
+
+            ctx.fillRect(
+                col * blockSize,
+                row * blockSize,
+                blockSize,
+                blockSize
+            );
+        }
+    }
+
+    container.appendChild(canvas);
+
+    // // auto download each QR
+    // const link = document.createElement('a');
+    // link.download = container.previousSibling.textContent + '.png';
+    // link.href = canvas.toDataURL();
+    // link.click();
+}
+
+</script>
+</body>
+</html>
