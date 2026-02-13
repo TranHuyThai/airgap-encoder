@@ -1,45 +1,73 @@
 <!DOCTYPE html>
-<html>
-<body style="margin:0; background:black; padding: 10%;">
-<canvas id="canvas"></canvas>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Python File Grid Viewer</title>
+<style>
+  body { display: flex; font-family: sans-serif; margin: 20px; }
+  #sidePanel { width: 250px; border: 1px solid #ccc; padding: 10px; }
+  #sidePanel button { width: 100%; margin-bottom: 5px; text-align: left; }
+  #canvasContainer { flex: 1; margin-left: 20px; }
+  canvas { border: 1px solid #000; }
+</style>
+</head>
+<body>
+
+<div id="sidePanel">
+  <h3>Python Files</h3>
+  <div id="fileButtons">Loading...</div>
+</div>
+
+<div id="canvasContainer">
+  <canvas id="canvas"></canvas>
+</div>
 
 <script>
-fetch('/grid')
-  .then(res => res.json())
-  .then(data => {
-      const side = data.side;
-      const bits = data.bits;
+async function loadFiles() {
+    const res = await fetch("/files");
+    const files = await res.json();
+    const container = document.getElementById("fileButtons");
+    container.innerHTML = "";
 
-      const blockSize = 10;  // adjust for camera clarity
-      const canvas = document.getElementById("canvas");
-      const ctx = canvas.getContext("2d");
+    files.forEach(f => {
+        const btn = document.createElement("button");
+        btn.textContent = f.split("/").pop();
+        btn.onclick = () => drawGrid(f);
+        container.appendChild(btn);
+    });
+}
 
-      canvas.width = side * blockSize;
-      canvas.height = side * blockSize;
+async function drawGrid(filePath) {
+    const res = await fetch(`/grid?file=${encodeURIComponent(filePath)}`);
+    if (!res.ok) { alert("Error fetching grid"); return; }
+    const data = await res.json();
 
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const side = data.side;
+    const bits = data.bits;
+    const blockSize = 2;
 
-      ctx.fillStyle = "black";
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
 
-      for (let i = 0; i < bits.length; i++) {
-          if (bits[i] === '1') {
-              let row = Math.floor(i / side);
-              let col = i % side;
+    canvas.width = side * blockSize;
+    canvas.height = side * blockSize;
 
-              ctx.fillRect(
-                  col * blockSize,
-                  row * blockSize,
-                  blockSize,
-                  blockSize
-              );
-          }
-      }
-      const link = document.createElement('a');
-    link.download = 'frame.png';
-    link.href = canvas.toDataURL();
-    link.click();
-  });
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "black";
+    for (let i = 0; i < bits.length; i++) {
+        if (bits[i] === "1") {
+            const row = Math.floor(i / side);
+            const col = i % side;
+            ctx.fillRect(col * blockSize, row * blockSize, blockSize, blockSize);
+        }
+    }
+}
+
+// Load file buttons on page load
+loadFiles();
 </script>
+
 </body>
 </html>

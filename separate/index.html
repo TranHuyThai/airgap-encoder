@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0; background:black; padding: 10%;">
+<canvas id="canvas"></canvas>
+
+<script>
+fetch('/grid')
+  .then(res => res.json())
+  .then(data => {
+      const side = data.side;
+      const bits = data.bits;
+
+      const blockSize = 10;  // adjust for camera clarity
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      canvas.width = side * blockSize;
+      canvas.height = side * blockSize;
+
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "black";
+
+      for (let i = 0; i < bits.length; i++) {
+          if (bits[i] === '1') {
+              let row = Math.floor(i / side);
+              let col = i % side;
+
+              ctx.fillRect(
+                  col * blockSize,
+                  row * blockSize,
+                  blockSize,
+                  blockSize
+              );
+          }
+      }
+      const link = document.createElement('a');
+    link.download = 'frame.png';
+    link.href = canvas.toDataURL();
+    link.click();
+  });
+</script>
+</body>
+</html>
