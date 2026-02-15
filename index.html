@@ -2,205 +2,293 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Encoder</title>
+<title>QR Decoder</title>
 <style>
     body { 
-        display: flex; 
-        margin: 20px; 
+        margin: 0;
+        padding: 20px;
+        font-family: Arial, sans-serif;
     }
-
-    #sidePanel { 
-        width: 250px; 
-        flex-shrink: 0;      /* prevents resizing */
-        border: 1px solid #ccc; 
-        padding: 10px; 
-        overflow-y: auto;    /* scroll if too many buttons */
+    #video {
+        display: block;
+        max-width: 100%;
+        border: 2px solid #ccc;
     }
-
-    #sidePanel button { 
-        width: 100%; 
-        margin-bottom: 5px; 
-        text-align: left; 
+    #debugCanvas {
+        display: block;
+        margin-top: 10px;
+        border: 2px solid #ccc;
     }
-
-    #sidePanel button.active {
-        background-color: #2196F3;
-        color: white;
+    #output {
+        margin-top: 20px;
+        white-space: pre-wrap;
+        font-family: monospace;
+        background: #f0f0f0;
+        padding: 10px;
+        border: 1px solid #ccc;
     }
-
-    #canvasContainer { 
-        flex: 1; 
-        background-color: black;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        overflow: auto;
-        padding:30px
+    button {
+        margin: 10px 5px;
+        padding: 10px 20px;
     }
-
-    #qrPanel {
-        width:80px;
-        margin-left:10px;
-        border:1px solid #ccc;
-        padding:10px;
-        flex-shrink:0;
-    }
-
-    #qrButtons button {
-        width: 100%;
-        margin-bottom: 5px;
-    }
-
-    #qrButtons button.active {
-        background-color: #4CAF50;
-        color: white;
-    }
-
 </style>
-
 </head>
 <body>
 
-<div id="sidePanel">
-  <h3>Python Files</h3>
-  <div id="fileButtons">Loading...</div>
-</div>
+<video id="video" width="640" height="480" autoplay></video>
+<canvas id="debugCanvas" width="640" height="480"></canvas>
 
-<div id="qrPanel">
-  <h4>QR</h4>
-  <div id="qrButtons"></div>
-</div>
+<button onclick="startCamera()">Start Camera</button>
+<button onclick="stopCamera()">Stop Camera</button>
+<button onclick="toggleScan()">Toggle Scan</button>
 
-<div id="canvasContainer">
-  <canvas id="canvas"></canvas>
-</div>
+<div id="output">Waiting to detect QR code...</div>
 
 <script>
-let selectedFileButton = null;
+const video = document.getElementById('video');
+const debugCanvas = document.getElementById('debugCanvas');
+const debugCtx = debugCanvas.getContext('2d');
+const output = document.getElementById('output');
 
-async function loadFiles() {
-    const res = await fetch("/files");
-    const files = await res.json();
-    const container = document.getElementById("fileButtons");
-    container.innerHTML = "";
+let stream = null;
+let scanning = false;
+let animationId = null;
 
-    files.forEach((f, index) => {
-        const btn = document.createElement("button");
-        btn.textContent = f.split("/").pop();
-        btn.onclick = () => {
-            // remove previous active
-            if (selectedFileButton) {
-                selectedFileButton.classList.remove("active");
+async function startCamera() {
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment' } 
+        });
+        video.srcObject = stream;
+        output.textContent = 'Camera started. Click "Toggle Scan" to begin detection.';
+    } catch (err) {
+        output.textContent = 'Error accessing camera: ' + err.message;
+    }
+}
+
+function stopCamera() {
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+        scanning = false;
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        output.textContent = 'Camera stopped.';
+    }
+}
+
+function toggleScan() {
+    scanning = !scanning;
+    if (scanning) {
+        output.textContent = 'Scanning...';
+        scanFrame();
+    } else {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        output.textContent = 'Scanning paused.';
+    }
+}
+
+function scanFrame() {
+    if (!scanning) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    
+    ctx.drawImage(video, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // Try to detect the QR code
+    const result = detectQRCode(imageData);
+    
+    // Draw debug visualization
+    debugCtx.drawImage(video, 0, 0, debugCanvas.width, debugCanvas.height);
+    
+    if (result) {
+        output.textContent = 'QR Code detected!\n\n' + 
+            'Corners found: ' + result.corners.length + '\n' +
+            'Grid extracted: ' + (result.grid ? 'Yes' : 'No') + '\n' +
+            'Data: ' + (result.data || 'Decoding...');
+        
+        // Draw detected corners
+        debugCtx.strokeStyle = 'red';
+        debugCtx.lineWidth = 3;
+        result.corners.forEach(corner => {
+            debugCtx.strokeRect(corner.x - 5, corner.y - 5, 10, 10);
+        });
+        
+        if (result.grid) {
+            decodeGrid(result.grid);
+        }
+    }
+    
+    animationId = requestAnimationFrame(scanFrame);
+}
+
+function detectQRCode(imageData) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    
+    // Find white squares (8x8 markers)
+    const markers = findWhiteSquares(data, width, height);
+    
+    if (markers.length >= 3) {
+        // Sort markers to identify corners
+        const corners = identifyCorners(markers);
+        
+        if (corners.length === 3) {
+            // Extract the 128x128 grid
+            const grid = extractGrid(imageData, corners);
+            
+            return {
+                corners: corners,
+                grid: grid,
+                data: null
+            };
+        }
+    }
+    
+    return null;
+}
+
+function findWhiteSquares(data, width, height) {
+    const markers = [];
+    const minSize = 20; // minimum size in pixels for a marker
+    const step = 10; // scan step
+    
+    for (let y = 0; y < height - minSize; y += step) {
+        for (let x = 0; x < width - minSize; x += step) {
+            if (isWhiteSquare(data, width, x, y, minSize)) {
+                markers.push({ x: x, y: y, size: minSize });
             }
-            // set new active
-            btn.classList.add("active");
-            selectedFileButton = btn;
-            drawGrid(f, 0);
-        };
-        container.appendChild(btn);
-        // Auto-select first file
-        if (index === 0) {
-            btn.classList.add("active");
-            selectedFileButton = btn;
-            drawGrid(f, 0);
         }
-    });
+    }
+    
+    return markers;
 }
 
-let currentFile = null;
-let currentQRIndex = null;
-
-function drawMarkers(ctx, side, blockSize) {
-    const markerSize = 8 * blockSize; // size of marker
-    const offset = 0 * blockSize;      // distance from grid corners
-
-    ctx.fillStyle = "white";
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 2;
-
-    const positions = [
-        [offset, offset], // top-left
-        [canvas.width - markerSize - offset, offset], // top-right
-        [offset, canvas.height - markerSize - offset], // bottom-left
-        // [canvas.width - markerSize - offset, canvas.height - markerSize - offset] // bottom-right
-    ];
-
-    positions.forEach(([x, y]) => {
-        ctx.fillRect(x, y, markerSize, markerSize);
-        ctx.strokeRect(x, y, markerSize, markerSize);
-    });
+function isWhiteSquare(data, width, x, y, size) {
+    let whiteCount = 0;
+    let totalCount = 0;
+    const threshold = 200; // brightness threshold
+    
+    for (let dy = 0; dy < size; dy += 2) {
+        for (let dx = 0; dx < size; dx += 2) {
+            const px = x + dx;
+            const py = y + dy;
+            if (px >= width || py >= width) continue;
+            
+            const i = (py * width + px) * 4;
+            const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            
+            if (brightness > threshold) whiteCount++;
+            totalCount++;
+        }
+    }
+    
+    return (whiteCount / totalCount) > 0.8; // 80% white pixels
 }
 
+function identifyCorners(markers) {
+    if (markers.length < 3) return [];
+    
+    // Find top-left (min x+y), top-right (max x, min y), bottom-left (min x, max y)
+    markers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+    const topLeft = markers[0];
+    
+    markers.sort((a, b) => (b.x - a.x) || (a.y - b.y));
+    const topRight = markers[0];
+    
+    markers.sort((a, b) => (a.x - b.x) || (b.y - a.y));
+    const bottomLeft = markers[0];
+    
+    return [topLeft, topRight, bottomLeft];
+}
 
-async function drawGrid(filePath, index=0) {
-    currentFile = filePath;
-    currentQRIndex = index;
-
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-
-    const blockSize = 4;
+function extractGrid(imageData, corners) {
+    // This is simplified - you'd need proper perspective transformation
+    // For now, just extract a rough grid
+    
+    const [topLeft, topRight, bottomLeft] = corners;
+    
+    // Calculate approximate grid dimensions
+    const gridWidth = Math.abs(topRight.x - topLeft.x);
+    const gridHeight = Math.abs(bottomLeft.y - topLeft.y);
+    
+    if (gridWidth < 50 || gridHeight < 50) return null;
+    
     const SIDE = 128;
-
-    canvas.width = SIDE * blockSize + 64;  // add padding for markers
-    canvas.height = SIDE * blockSize + 64;
-
-    // Clear canvas
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Draw corner markers always
-    drawMarkers(ctx, SIDE, blockSize);
-
-    // If file not selected, exit
-    if (!filePath) return;
-
-    // Fetch grid
-    const res = await fetch(`/grid?file=${encodeURIComponent(filePath)}&index=${index}`);
-    if (!res.ok) { alert("Error fetching grid"); return; }
-
-    const data = await res.json();
-    const bits = data.bits;
-
-    // Draw QR code centered
-    const startX = (canvas.width - SIDE * blockSize) / 2;
-    const startY = (canvas.height - SIDE * blockSize) / 2;
-
-    ctx.fillStyle = "white";
-    ctx.fillRect(startX, startY, SIDE * blockSize, SIDE * blockSize);
-
-    ctx.fillStyle = "black";
-    for (let i = 0; i < bits.length; i++) {
-        if (bits[i] === "1") {
-            const row = Math.floor(i / SIDE);
-            const col = i % SIDE;
-            ctx.fillRect(startX + col * blockSize, startY + row * blockSize, blockSize, blockSize);
+    const bits = [];
+    const blockWidth = gridWidth / SIDE;
+    const blockHeight = gridHeight / SIDE;
+    
+    for (let row = 0; row < SIDE; row++) {
+        for (let col = 0; col < SIDE; col++) {
+            const x = Math.floor(topLeft.x + col * blockWidth + blockWidth / 2);
+            const y = Math.floor(topLeft.y + row * blockHeight + blockHeight / 2);
+            
+            if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
+                const i = (y * imageData.width + x) * 4;
+                const brightness = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
+                bits.push(brightness < 128 ? '1' : '0');
+            } else {
+                bits.push('0');
+            }
         }
     }
-
-    buildQRButtons(data.total);
+    
+    return bits.join('');
 }
 
-
-function buildQRButtons(total) {
-    const container = document.getElementById("qrButtons");
-    container.innerHTML = "";
-    for (let i = 0; i < total; i++) {
-        const btn = document.createElement("button");
-        btn.textContent = i + 1;
-        if (i === currentQRIndex) {
-            btn.classList.add("active");
+function decodeGrid(bitString) {
+    try {
+        // Convert bits to bytes
+        const bytes = [];
+        for (let i = 0; i < bitString.length; i += 8) {
+            const byte = parseInt(bitString.substr(i, 8), 2);
+            bytes.push(byte);
         }
-        btn.onclick = () => {
-            currentQRIndex = i;
-            drawGrid(currentFile, i);
-        };
-        container.appendChild(btn);
+        
+        // Check magic bytes "B2D1"
+        if (bytes[0] !== 0x42 || bytes[1] !== 0x32 || bytes[2] !== 0x44 || bytes[3] !== 0x31) {
+            output.textContent += '\nInvalid magic bytes';
+            return;
+        }
+        
+        // Extract header
+        const total = (bytes[4] << 8) | bytes[5];
+        const index = (bytes[6] << 8) | bytes[7];
+        const length = (bytes[8] << 8) | bytes[9];
+        
+        // Extract data
+        const chunkData = bytes.slice(10, 10 + length);
+        
+        // Extract CRC (last 4 bytes of chunk)
+        const crcStart = 10 + length;
+        const crc = (bytes[crcStart] << 24) | (bytes[crcStart + 1] << 16) | 
+                    (bytes[crcStart + 2] << 8) | bytes[crcStart + 3];
+        
+        // Try to decode as text
+        const text = String.fromCharCode(...chunkData);
+        
+        output.textContent = 'Decoded successfully!\n\n' +
+            'Magic: B2D1\n' +
+            'Total chunks: ' + total + '\n' +
+            'Current chunk: ' + index + '\n' +
+            'Data length: ' + length + '\n' +
+            'CRC: 0x' + crc.toString(16) + '\n\n' +
+            'Data preview:\n' + text.substring(0, 500);
+            
+    } catch (err) {
+        output.textContent += '\nDecode error: ' + err.message;
     }
 }
-
-// Load file buttons on page load
-loadFiles();
 </script>
+
 </body>
 </html>

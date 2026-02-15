@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Encoder</title>
+<style>
+    body { 
+        display: flex; 
+        margin: 20px; 
+    }
+
+    #sidePanel { 
+        width: 250px; 
+        flex-shrink: 0;      /* prevents resizing */
+        border: 1px solid #ccc; 
+        padding: 10px; 
+        overflow-y: auto;    /* scroll if too many buttons */
+    }
+
+    #sidePanel button { 
+        width: 100%; 
+        margin-bottom: 5px; 
+        text-align: left; 
+    }
+
+    #sidePanel button.active {
+        background-color: #2196F3;
+        color: white;
+    }
+
+    #canvasContainer { 
+        flex: 1; 
+        background-color: black;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: auto;
+        padding:30px
+    }
+
+    #qrPanel {
+        width:80px;
+        margin-left:10px;
+        border:1px solid #ccc;
+        padding:10px;
+        flex-shrink:0;
+    }
+
+    #qrButtons button {
+        width: 100%;
+        margin-bottom: 5px;
+    }
+
+    #qrButtons button.active {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+</style>
+
+</head>
+<body>
+
+<div id="sidePanel">
+  <h3>Python Files</h3>
+  <div id="fileButtons">Loading...</div>
+</div>
+
+<div id="qrPanel">
+  <h4>QR</h4>
+  <div id="qrButtons"></div>
+</div>
+
+<div id="canvasContainer">
+  <canvas id="canvas"></canvas>
+</div>
+
+<script>
+let selectedFileButton = null;
+
+async function loadFiles() {
+    const res = await fetch("/files");
+    const files = await res.json();
+    const container = document.getElementById("fileButtons");
+    container.innerHTML = "";
+
+    files.forEach((f, index) => {
+        const btn = document.createElement("button");
+        btn.textContent = f.split("/").pop();
+        btn.onclick = () => {
+            // remove previous active
+            if (selectedFileButton) {
+                selectedFileButton.classList.remove("active");
+            }
+            // set new active
+            btn.classList.add("active");
+            selectedFileButton = btn;
+            drawGrid(f, 0);
+        };
+        container.appendChild(btn);
+        // Auto-select first file
+        if (index === 0) {
+            btn.classList.add("active");
+            selectedFileButton = btn;
+            drawGrid(f, 0);
+        }
+    });
+}
+
+let currentFile = null;
+let currentQRIndex = null;
+
+function drawMarkers(ctx, side, blockSize) {
+    const markerSize = 8 * blockSize; // size of marker
+    const offset = 0 * blockSize;      // distance from grid corners
+
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 2;
+
+    const positions = [
+        [offset, offset], // top-left
+        [canvas.width - markerSize - offset, offset], // top-right
+        [offset, canvas.height - markerSize - offset], // bottom-left
+        // [canvas.width - markerSize - offset, canvas.height - markerSize - offset] // bottom-right
+    ];
+
+    positions.forEach(([x, y]) => {
+        ctx.fillRect(x, y, markerSize, markerSize);
+        ctx.strokeRect(x, y, markerSize, markerSize);
+    });
+}
+
+
+async function drawGrid(filePath, index=0) {
+    currentFile = filePath;
+    currentQRIndex = index;
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const blockSize = 4;
+    const SIDE = 128;
+
+    canvas.width = SIDE * blockSize + 64;  // add padding for markers
+    canvas.height = SIDE * blockSize + 64;
+
+    // Clear canvas
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw corner markers always
+    drawMarkers(ctx, SIDE, blockSize);
+
+    // If file not selected, exit
+    if (!filePath) return;
+
+    // Fetch grid
+    const res = await fetch(`/grid?file=${encodeURIComponent(filePath)}&index=${index}`);
+    if (!res.ok) { alert("Error fetching grid"); return; }
+
+    const data = await res.json();
+    const bits = data.bits;
+
+    // Draw QR code centered
+    const startX = (canvas.width - SIDE * blockSize) / 2;
+    const startY = (canvas.height - SIDE * blockSize) / 2;
+
+    ctx.fillStyle = "white";
+    ctx.fillRect(startX, startY, SIDE * blockSize, SIDE * blockSize);
+
+    ctx.fillStyle = "black";
+    for (let i = 0; i < bits.length; i++) {
+        if (bits[i] === "1") {
+            const row = Math.floor(i / SIDE);
+            const col = i % SIDE;
+            ctx.fillRect(startX + col * blockSize, startY + row * blockSize, blockSize, blockSize);
+        }
+    }
+
+    buildQRButtons(data.total);
+}
+
+
+function buildQRButtons(total) {
+    const container = document.getElementById("qrButtons");
+    container.innerHTML = "";
+    for (let i = 0; i < total; i++) {
+        const btn = document.createElement("button");
+        btn.textContent = i + 1;
+        if (i === currentQRIndex) {
+            btn.classList.add("active");
+        }
+        btn.onclick = () => {
+            currentQRIndex = i;
+            drawGrid(currentFile, i);
+        };
+        container.appendChild(btn);
+    }
+}
+
+// Load file buttons on page load
+loadFiles();
+</script>
+</body>
+</html>
