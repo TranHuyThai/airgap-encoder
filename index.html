@@ -2,65 +2,85 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>QR Decoder</title>
+<title>QR Decoder - Alignment Mode</title>
 <style>
     body { 
         margin: 0;
         padding: 20px;
         font-family: Arial, sans-serif;
     }
+    #container {
+        position: relative;
+        display: inline-block;
+    }
     #video {
         display: block;
-        max-width: 100%;
+        width: 640px;
+        height: 480px;
         border: 2px solid #ccc;
     }
-    #debugCanvas {
-        display: block;
-        margin-top: 10px;
-        border: 2px solid #ccc;
-    }
-    #output {
-        margin-top: 20px;
-        white-space: pre-wrap;
-        font-family: monospace;
-        background: #f0f0f0;
-        padding: 10px;
-        border: 1px solid #ccc;
+    #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 640px;
+        height: 480px;
+        pointer-events: none;
     }
     button {
         margin: 10px 5px;
         padding: 10px 20px;
     }
+    #output {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        background: #f0f0f0;
+        font-family: monospace;
+        white-space: pre-wrap;
+        max-height: 200px;
+        overflow-y: auto;
+    }
 </style>
 </head>
 <body>
 
-<video id="video" width="640" height="480" autoplay playsinline muted></video>
-<canvas id="debugCanvas" width="640" height="480"></canvas>
+<div id="container">
+    <video id="video" width="640" height="480" autoplay playsinline muted></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+</div>
 
 <button onclick="startCamera()">Start Camera</button>
 <button onclick="stopCamera()">Stop Camera</button>
 <button onclick="toggleScan()">Toggle Scan</button>
 
-<div id="output">Waiting to detect QR code...</div>
+<div id="output">Align the white corner squares with the green guides...</div>
 
 <script>
 const video = document.getElementById('video');
-const debugCanvas = document.getElementById('debugCanvas');
-const debugCtx = debugCanvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const overlayCtx = overlay.getContext('2d');
 const output = document.getElementById('output');
 
 let stream = null;
 let scanning = false;
 let animationId = null;
 
+// Define guide positions (adjust these to match your QR code layout)
+const guides = {
+    topLeft: { x: 100, y: 80, size: 60 },
+    topRight: { x: 480, y: 80, size: 60 },
+    bottomLeft: { x: 100, y: 340, size: 60 }
+};
+
 async function startCamera() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment' } 
+            video: { facingMode: 'environment', width: 1280, height: 720 } 
         });
         video.srcObject = stream;
-        output.textContent = 'Camera started. Click "Toggle Scan" to begin detection.';
+        output.textContent = 'Camera started. Click "Toggle Scan" to begin.';
+        drawGuides();
     } catch (err) {
         output.textContent = 'Error accessing camera: ' + err.message;
     }
@@ -74,6 +94,7 @@ function stopCamera() {
         if (animationId) {
             cancelAnimationFrame(animationId);
         }
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
         output.textContent = 'Camera stopped.';
     }
 }
@@ -87,12 +108,37 @@ function toggleScan() {
         if (animationId) {
             cancelAnimationFrame(animationId);
         }
+        drawGuides();
         output.textContent = 'Scanning paused.';
     }
 }
 
+function drawGuides() {
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    
+    // Draw semi-transparent guides
+    overlayCtx.strokeStyle = 'lime';
+    overlayCtx.lineWidth = 3;
+    overlayCtx.setLineDash([10, 5]);
+    
+    overlayCtx.strokeRect(guides.topLeft.x, guides.topLeft.y, guides.topLeft.size, guides.topLeft.size);
+    overlayCtx.strokeRect(guides.topRight.x, guides.topRight.y, guides.topRight.size, guides.topRight.size);
+    overlayCtx.strokeRect(guides.bottomLeft.x, guides.bottomLeft.y, guides.bottomLeft.size, guides.bottomLeft.size);
+    
+    // Draw labels
+    overlayCtx.setLineDash([]);
+    overlayCtx.fillStyle = 'lime';
+    overlayCtx.font = '12px Arial';
+    overlayCtx.fillText('TL', guides.topLeft.x, guides.topLeft.y - 5);
+    overlayCtx.fillText('TR', guides.topRight.x, guides.topRight.y - 5);
+    overlayCtx.fillText('BL', guides.bottomLeft.x, guides.bottomLeft.y - 5);
+}
+
 function scanFrame() {
     if (!scanning) return;
+
+    // Redraw guides
+    drawGuides();
 
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
@@ -102,135 +148,62 @@ function scanFrame() {
     ctx.drawImage(video, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
-    // Try to detect the QR code
-    const result = detectQRCode(imageData);
+    // Extract grid based on guide positions
+    const grid = extractGridFromGuides(imageData);
     
-    // Draw debug visualization
-    debugCtx.drawImage(video, 0, 0, debugCanvas.width, debugCanvas.height);
-    
-    if (result) {
-        output.textContent = 'QR Code detected!\n\n' + 
-            'Corners found: ' + result.corners.length + '\n' +
-            'Grid extracted: ' + (result.grid ? 'Yes' : 'No') + '\n' +
-            'Data: ' + (result.data || 'Decoding...');
-        
-        // Draw detected corners
-        debugCtx.strokeStyle = 'red';
-        debugCtx.lineWidth = 3;
-        result.corners.forEach(corner => {
-            debugCtx.strokeRect(corner.x - 5, corner.y - 5, 10, 10);
-        });
-        
-        if (result.grid) {
-            decodeGrid(result.grid);
-        }
+    if (grid) {
+        decodeGrid(grid);
     }
     
     animationId = requestAnimationFrame(scanFrame);
 }
 
-function detectQRCode(imageData) {
-    const width = imageData.width;
-    const height = imageData.height;
-    const data = imageData.data;
-    
-    // Find white squares (8x8 markers)
-    const markers = findWhiteSquares(data, width, height);
-    
-    if (markers.length >= 3) {
-        // Sort markers to identify corners
-        const corners = identifyCorners(markers);
-        
-        if (corners.length === 3) {
-            // Extract the 128x128 grid
-            const grid = extractGrid(imageData, corners);
-            
-            return {
-                corners: corners,
-                grid: grid,
-                data: null
-            };
-        }
-    }
-    
-    return null;
-}
-
-function findWhiteSquares(data, width, height) {
-    const markers = [];
-    const minSize = 60; // minimum size in pixels for a marker
-    const step = 10; // scan step
-    
-    for (let y = 0; y < height - minSize; y += step) {
-        for (let x = 0; x < width - minSize; x += step) {
-            if (isWhiteSquare(data, width, x, y, minSize)) {
-                markers.push({ x: x, y: y, size: minSize });
-            }
-        }
-    }
-    
-    return markers;
-}
-
-function isWhiteSquare(data, width, x, y, size) {
-    let whiteCount = 0;
-    let totalCount = 0;
-    const threshold = 150; // brightness threshold
-    
-    for (let dy = 0; dy < size; dy += 2) {
-        for (let dx = 0; dx < size; dx += 2) {
-            const px = x + dx;
-            const py = y + dy;
-            if (px >= width || py >= width) continue;
-            
-            const i = (py * width + px) * 4;
-            const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
-            
-            if (brightness > threshold) whiteCount++;
-            totalCount++;
-        }
-    }
-    
-    return (whiteCount / totalCount) > 0.6; // 80% white pixels
-}
-
-function identifyCorners(markers) {
-    if (markers.length < 3) return [];
-    
-    // Find top-left (min x+y), top-right (max x, min y), bottom-left (min x, max y)
-    markers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
-    const topLeft = markers[0];
-    
-    markers.sort((a, b) => (b.x - a.x) || (a.y - b.y));
-    const topRight = markers[0];
-    
-    markers.sort((a, b) => (a.x - b.x) || (b.y - a.y));
-    const bottomLeft = markers[0];
-    
-    return [topLeft, topRight, bottomLeft];
-}
-
-function extractGrid(imageData, corners) {
-    // This is simplified - you'd need proper perspective transformation
-    // For now, just extract a rough grid
-    
-    const [topLeft, topRight, bottomLeft] = corners;
-    
-    // Calculate approximate grid dimensions
-    const gridWidth = Math.abs(topRight.x - topLeft.x);
-    const gridHeight = Math.abs(bottomLeft.y - topLeft.y);
-    
-    if (gridWidth < 50 || gridHeight < 50) return null;
-    
+function extractGridFromGuides(imageData) {
     const SIDE = 128;
-    const bits = [];
+    
+    // Calculate scale between video display and actual video resolution
+    const scaleX = imageData.width / video.clientWidth;
+    const scaleY = imageData.height / video.clientHeight;
+    
+    // Scale guide positions to match actual video resolution
+    const topLeft = {
+        x: guides.topLeft.x * scaleX,
+        y: guides.topLeft.y * scaleY,
+        size: guides.topLeft.size * scaleX
+    };
+    const topRight = {
+        x: guides.topRight.x * scaleX,
+        y: guides.topRight.y * scaleY,
+        size: guides.topRight.size * scaleX
+    };
+    const bottomLeft = {
+        x: guides.bottomLeft.x * scaleX,
+        y: guides.bottomLeft.y * scaleY,
+        size: guides.bottomLeft.size * scaleX
+    };
+    
+    // Calculate the center of each corner marker
+    const tlCenter = { x: topLeft.x + topLeft.size / 2, y: topLeft.y + topLeft.size / 2 };
+    const trCenter = { x: topRight.x + topRight.size / 2, y: topRight.y + topRight.size / 2 };
+    const blCenter = { x: bottomLeft.x + bottomLeft.size / 2, y: bottomLeft.y + bottomLeft.size / 2 };
+    
+    // Calculate grid dimensions (assuming square grid)
+    const gridWidth = trCenter.x - tlCenter.x;
+    const gridHeight = blCenter.y - tlCenter.y;
+    
+    // Start position (top-left of actual data, accounting for 8x8 marker offset)
+    const startX = tlCenter.x;
+    const startY = tlCenter.y;
+    
     const blockWidth = gridWidth / SIDE;
     const blockHeight = gridHeight / SIDE;
     
+    const bits = [];
+    
     for (let row = 0; row < SIDE; row++) {
         for (let col = 0; col < SIDE; col++) {
-            const x = Math.floor(topLeft.x + col * blockWidth + blockWidth / 2);
-            const y = Math.floor(topLeft.y + row * blockHeight + blockHeight / 2);
+            const x = Math.floor(startX + col * blockWidth);
+            const y = Math.floor(startY + row * blockHeight);
             
             if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
                 const i = (y * imageData.width + x) * 4;
@@ -255,10 +228,7 @@ function decodeGrid(bitString) {
         }
         
         // Check magic bytes "B2D1"
-        if (bytes[0] !== 0x42 || bytes[1] !== 0x32 || bytes[2] !== 0x44 || bytes[3] !== 0x31) {
-            output.textContent += '\nInvalid magic bytes';
-            return;
-        }
+        const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
         
         // Extract header
         const total = (bytes[4] << 8) | bytes[5];
@@ -268,24 +238,32 @@ function decodeGrid(bitString) {
         // Extract data
         const chunkData = bytes.slice(10, 10 + length);
         
-        // Extract CRC (last 4 bytes of chunk)
+        // Extract CRC
         const crcStart = 10 + length;
         const crc = (bytes[crcStart] << 24) | (bytes[crcStart + 1] << 16) | 
                     (bytes[crcStart + 2] << 8) | bytes[crcStart + 3];
         
         // Try to decode as text
-        const text = String.fromCharCode(...chunkData);
+        let text = '';
+        for (let i = 0; i < chunkData.length; i++) {
+            const byte = chunkData[i];
+            if (byte >= 32 && byte <= 126) {
+                text += String.fromCharCode(byte);
+            } else {
+                text += '.';
+            }
+        }
         
-        output.textContent = 'Decoded successfully!\n\n' +
-            'Magic: B2D1\n' +
+        output.textContent = 
+            'Magic: ' + magic + (magic === 'B2D1' ? ' ✓' : ' ✗') + '\n' +
             'Total chunks: ' + total + '\n' +
             'Current chunk: ' + index + '\n' +
             'Data length: ' + length + '\n' +
-            'CRC: 0x' + crc.toString(16) + '\n\n' +
-            'Data preview:\n' + text.substring(0, 500);
+            'CRC: 0x' + crc.toString(16).padStart(8, '0') + '\n\n' +
+            'Decoded data:\n' + text;
             
     } catch (err) {
-        output.textContent += '\nDecode error: ' + err.message;
+        output.textContent = 'Decode error: ' + err.message;
     }
 }
 </script>
