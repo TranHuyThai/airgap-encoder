@@ -13,25 +13,25 @@
         position: relative;
         display: inline-block;
     }
+    #container {
+        width: 576px;   /* 144 blocks × 4px */
+        height: 576px;
+        max-width: 100vw;
+        max-height: 100vh;
+    }
     #video {
         display: block;
-        width: 100%;        /* fill container */
-        height: 100%;       /* fill container */
-        object-fit: cover;  /* important! */
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
         border: 2px solid #ccc;
-    }
-    #container {
-    width: 480px;   /* your desired width */
-    height: 480px;  /* your desired height */
-    max-width: 100vw;
-    max-height: 100vh;
     }
     #overlay {
         position: absolute;
         top: 0;
         left: 0;
-        width: 640px;
-        height: 480px;
+        width: 576px;   /* MUST match container */
+        height: 576px;  /* MUST match container */
         pointer-events: none;
     }
     button {
@@ -75,9 +75,9 @@ let animationId = null;
 
 // Define guide positions (adjust these to match your QR code layout)
 const guides = {
-    topLeft: { x: 100, y: 80, size: 60 },
-    topRight: { x: 480, y: 80, size: 60 },
-    bottomLeft: { x: 100, y: 340, size: 60 }
+    topLeft: { x: 32, y: 32, size: 32 },      // 8 blocks × 4px = 32px
+    topRight: { x: 512, y: 32, size: 32 },    // 576 - 32 - 32 = 512
+    bottomLeft: { x: 32, y: 512, size: 32 }   // 576 - 32 - 32 = 512
 };
 
 async function startCamera() {
