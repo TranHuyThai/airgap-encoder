@@ -189,18 +189,20 @@ function extractGridFromGuides(imageData) {
         size: guides.bottomLeft.size * scaleX
     };
     
-    // Calculate the center of each corner marker
-    const tlCenter = { x: topLeft.x + topLeft.size / 2, y: topLeft.y + topLeft.size / 2 };
-    const trCenter = { x: topRight.x + topRight.size / 2, y: topRight.y + topRight.size / 2 };
-    const blCenter = { x: bottomLeft.x + bottomLeft.size / 2, y: bottomLeft.y + bottomLeft.size / 2 };
+    // The white markers are OUTSIDE the 128x128 data grid
+    // The data grid starts at the bottom-right of top-left marker
+    const dataStartX = topLeft.x + topLeft.size;  // after the marker
+    const dataStartY = topLeft.y + topLeft.size;  // after the marker
     
-    // Calculate grid dimensions (assuming square grid)
-    const gridWidth = trCenter.x - tlCenter.x;
-    const gridHeight = blCenter.y - tlCenter.y;
+    // Calculate data grid dimensions
+    // Distance from end of top-left marker to start of top-right marker
+    const gridWidth = topRight.x - (topLeft.x + topLeft.size);
+    // Distance from end of top-left marker to start of bottom-left marker
+    const gridHeight = bottomLeft.y - (topLeft.y + topLeft.size);
     
-    // Start position (top-left of actual data, accounting for 8x8 marker offset)
-    const startX = tlCenter.x;
-    const startY = tlCenter.y;
+    // Start position is after the top-left marker
+    const startX = dataStartX;
+    const startY = dataStartY;
     
     const blockWidth = gridWidth / SIDE;
     const blockHeight = gridHeight / SIDE;
