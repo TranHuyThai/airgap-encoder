@@ -15,9 +15,16 @@
     }
     #video {
         display: block;
-        width: 640px;
-        height: 480px;
+        width: 100%;        /* fill container */
+        height: 100%;       /* fill container */
+        object-fit: cover;  /* important! */
         border: 2px solid #ccc;
+    }
+    #container {
+    width: 480px;   /* your desired width */
+    height: 480px;  /* your desired height */
+    max-width: 100vw;
+    max-height: 100vh;
     }
     #overlay {
         position: absolute;
@@ -46,8 +53,8 @@
 <body>
 
 <div id="container">
-    <video id="video" width="480" height="480" autoplay playsinline muted></video>
-    <canvas id="overlay" width="480" height="480"></canvas>
+    <video id="video"autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
 </div>
 
 <button onclick="startCamera()">Start Camera</button>
