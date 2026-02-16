@@ -16,17 +16,17 @@
     }
     #video {
         display: block;
-        width: 640px;
-        height: 480px;
-        max-width: 100%;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
         border: 2px solid #ccc;
     }
     #overlay {
         position: absolute;
         top: 0;
         left: 0;
-        width: 640px;
-        height: 480px;
+        width: 576px;   /* MUST match container */
+        height: 576px;  /* MUST match container */
         pointer-events: none;
     }
     button {
@@ -48,8 +48,8 @@
 <body>
 
 <div id="container">
-    <video id="video" width="640" height="480" autoplay playsinline muted></video>
-    <canvas id="overlay" width="640" height="480"></canvas>
+    <video id="video"autoplay playsinline muted></video>
+    <canvas id="overlay" width="576" height="576"></canvas>
 </div>
 
 <button onclick="startCamera()">Start Camera</button>
