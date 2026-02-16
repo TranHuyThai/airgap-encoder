@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>QR Decoder - Detection Mode</title>
+<style>
+    body { 
+        margin: 0;
+        padding: 20px;
+        font-family: Arial, sans-serif;
+    }
+    #container {
+        position: relative;
+        display: inline-block;
+        width: 576px;   /* 144 blocks × 4px */
+        height: 576px;
+        max-width: 100vw;
+        max-height: 100vh;
+    }
+    #video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border: 2px solid #ccc;
+    }
+    #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 576px;   /* MUST match container */
+        height: 576px;  /* MUST match container */
+        pointer-events: none;
+    }
+    button {
+        margin: 10px 5px;
+        padding: 10px 20px;
+    }
+    #output {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        background: #f0f0f0;
+        font-family: monospace;
+        white-space: pre-wrap;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+</style>
+</head>
+<body>
+
+<div id="container">
+    <video id="video"autoplay playsinline muted></video>
+    <canvas id="overlay" width="576" height="576"></canvas>
+</div>
+
+<button onclick="startCamera()">Start Camera</button>
+<button onclick="stopCamera()">Stop Camera</button>
+<button onclick="toggleScan()">Toggle Scan</button>
+
+<div id="output">Waiting to detect QR code...</div>
+
+<script>
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const overlayCtx = overlay.getContext('2d');
+const output = document.getElementById('output');
+
+let stream = null;
+let scanning = false;
+let animationId = null;
+
+async function startCamera() {
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment', width: 1280, height: 720 } 
+        });
+        video.srcObject = stream;
+        output.textContent = 'Camera started. Click "Toggle Scan" to begin detection.';
+    } catch (err) {
+        output.textContent = 'Error accessing camera: ' + err.message;
+    }
+}
+
+function stopCamera() {
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+        scanning = false;
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        output.textContent = 'Camera stopped.';
+    }
+}
+
+function toggleScan() {
+    scanning = !scanning;
+    if (scanning) {
+        output.textContent = 'Scanning...';
+        scanFrame();
+    } else {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        output.textContent = 'Scanning paused.';
+    }
+}
+
+function scanFrame() {
+    if (!scanning) return;
+
+    // Clear overlay
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    
+    ctx.drawImage(video, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // Calculate scale between video display and actual video resolution
+    const scaleX = overlay.width / video.videoWidth;
+    const scaleY = overlay.height / video.videoHeight;
+    
+    // Try to detect the QR code
+    const result = detectQRCode(imageData);
+    
+    // Debug: show all detected markers
+    const debugInfo = detectQRCodeDebug(imageData);
+    if (debugInfo && debugInfo.allMarkers) {
+        // Draw all detected markers in yellow
+        overlayCtx.strokeStyle = 'yellow';
+        overlayCtx.lineWidth = 2;
+        overlayCtx.fillStyle = 'yellow';
+        overlayCtx.font = '12px Arial';
+        
+        debugInfo.allMarkers.forEach((marker, idx) => {
+            const x = marker.x * scaleX;
+            const y = marker.y * scaleY;
+            const w = marker.width * scaleX;
+            const h = marker.height * scaleY;
+            
+            overlayCtx.strokeRect(x, y, w, h);
+            overlayCtx.fillText(`${idx}`, x + 5, y + 15);
+        });
+        
+        output.textContent = `Found ${debugInfo.allMarkers.length} white regions\n`;
+    }
+    
+    if (result) {
+        output.textContent += 'QR Code detected!\n\n' + 
+            'Corners found: ' + result.corners.length + '\n' +
+            'Grid extracted: ' + (result.grid ? 'Yes' : 'No') + '\n';
+        
+        // Draw detected corners on overlay in RED (final selection)
+        overlayCtx.strokeStyle = 'red';
+        overlayCtx.lineWidth = 4;
+        overlayCtx.fillStyle = 'red';
+        overlayCtx.font = '16px Arial';
+        
+        result.corners.forEach((corner, idx) => {
+            const x = corner.x * scaleX;
+            const y = corner.y * scaleY;
+            const w = (corner.width || corner.size) * scaleX;
+            const h = (corner.height || corner.size) * scaleY;
+            
+            // Draw red rectangle around detected corner
+            overlayCtx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+            
+            // Label the corner
+            const labels = ['TL', 'TR', 'BL'];
+            overlayCtx.fillText(labels[idx], x, y - 5);
+        });
+        
+        if (result.grid) {
+            decodeGrid(result.grid);
+        }
+    } else {
+        output.textContent += 'Searching for 3 corner markers...';
+    }
+    
+    animationId = requestAnimationFrame(scanFrame);
+}
+
+// Debug version that returns all markers
+function detectQRCodeDebug(imageData) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    
+    const gray = toGrayscale(data, width, height);
+    const binary = adaptiveThreshold(gray, width, height);
+    const markers = findWhiteSquares(binary, width, height);
+    
+    return { allMarkers: markers };
+}
+
+function detectQRCode(imageData) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    
+    // Convert to grayscale and apply adaptive thresholding
+    const gray = toGrayscale(data, width, height);
+    const binary = adaptiveThreshold(gray, width, height);
+    
+    // Find white squares using multiple methods
+    const markers = findWhiteSquares(binary, width, height);
+    
+    if (markers.length >= 3) {
+        // Sort markers to identify corners
+        const corners = identifyCorners(markers);
+        
+        if (corners.length === 3) {
+            // Extract the 128x128 grid
+            const grid = extractGrid(imageData, corners);
+            
+            return {
+                corners: corners,
+                grid: grid,
+                data: null
+            };
+        }
+    }
+    
+    return null;
+}
+
+function toGrayscale(data, width, height) {
+    const gray = new Uint8Array(width * height);
+    for (let i = 0; i < data.length; i += 4) {
+        const idx = i / 4;
+        // Use luminosity method for better grayscale conversion
+        gray[idx] = Math.floor(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+    }
+    return gray;
+}
+
+function adaptiveThreshold(gray, width, height) {
+    const binary = new Uint8Array(width * height);
+    const windowSize = 15; // adaptive window size
+    
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const idx = y * width + x;
+            
+            // Calculate local mean in window
+            let sum = 0;
+            let count = 0;
+            const halfWindow = Math.floor(windowSize / 2);
+            
+            for (let dy = -halfWindow; dy <= halfWindow; dy++) {
+                for (let dx = -halfWindow; dx <= halfWindow; dx++) {
+                    const ny = y + dy;
+                    const nx = x + dx;
+                    if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+                        sum += gray[ny * width + nx];
+                        count++;
+                    }
+                }
+            }
+            
+            const mean = sum / count;
+            // Threshold: if pixel is significantly brighter than local mean, it's white
+            binary[idx] = gray[idx] > mean + 10 ? 255 : 0;
+        }
+    }
+    
+    return binary;
+}
+
+function findWhiteSquares(binary, width, height) {
+    const markers = [];
+    const minSize = 30; // minimum size in pixels for a marker
+    const maxSize = 200; // maximum size
+    const step = 8; // scan step - smaller for better detection
+    
+    // Scan for potential white square regions
+    for (let y = 0; y < height - minSize; y += step) {
+        for (let x = 0; x < width - minSize; x += step) {
+            // Quick check: is this pixel white?
+            if (binary[y * width + x] < 200) continue;
+            
+            // Find the actual size of this white region
+            const region = measureWhiteRegion(binary, width, height, x, y, maxSize);
+            
+            if (region && region.width >= minSize && region.height >= minSize) {
+                // Check if it's roughly square (aspect ratio check)
+                const aspectRatio = region.width / region.height;
+                if (aspectRatio > 0.7 && aspectRatio < 1.3) {
+                    // Check if we already have a marker near this location
+                    const duplicate = markers.some(m => 
+                        Math.abs(m.x - region.x) < minSize && 
+                        Math.abs(m.y - region.y) < minSize
+                    );
+                    
+                    if (!duplicate) {
+                        markers.push({
+                            x: region.x,
+                            y: region.y,
+                            width: region.width,
+                            height: region.height,
+                            size: Math.max(region.width, region.height),
+                            centerX: region.x + region.width / 2,
+                            centerY: region.y + region.height / 2
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    // Filter markers by confidence
+    return markers.filter(m => {
+        // Verify the marker is actually white and square-like
+        const whiteness = checkWhiteness(binary, width, height, m.x, m.y, m.width, m.height);
+        return whiteness > 0.75; // at least 75% white pixels
+    });
+}
+
+function measureWhiteRegion(binary, width, height, startX, startY, maxSize) {
+    let minX = startX, maxX = startX;
+    let minY = startY, maxY = startY;
+    
+    // Expand right
+    let x = startX;
+    while (x < width && x < startX + maxSize && binary[startY * width + x] > 200) {
+        maxX = x;
+        x++;
+    }
+    
+    // Expand down
+    let y = startY;
+    while (y < height && y < startY + maxSize && binary[y * width + startX] > 200) {
+        maxY = y;
+        y++;
+    }
+    
+    // Expand left
+    x = startX;
+    while (x >= 0 && x > startX - maxSize && binary[startY * width + x] > 200) {
+        minX = x;
+        x--;
+    }
+    
+    // Expand up
+    y = startY;
+    while (y >= 0 && y > startY - maxSize && binary[y * width + startX] > 200) {
+        minY = y;
+        y--;
+    }
+    
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    
+    if (w < 10 || h < 10) return null;
+    
+    return { x: minX, y: minY, width: w, height: h };
+}
+
+function checkWhiteness(binary, width, height, x, y, w, h) {
+    let whiteCount = 0;
+    let totalCount = 0;
+    
+    for (let dy = 0; dy < h; dy += 2) {
+        for (let dx = 0; dx < w; dx += 2) {
+            const px = x + dx;
+            const py = y + dy;
+            if (px >= width || py >= height) continue;
+            
+            if (binary[py * width + px] > 200) whiteCount++;
+            totalCount++;
+        }
+    }
+    
+    return totalCount > 0 ? whiteCount / totalCount : 0;
+}
+
+function identifyCorners(markers) {
+    if (markers.length < 3) return [];
+    
+    // Filter out markers that are too close to each other (likely duplicates)
+    const filtered = [];
+    for (const marker of markers) {
+        const isDuplicate = filtered.some(m => 
+            Math.abs(m.centerX - marker.centerX) < 50 && 
+            Math.abs(m.centerY - marker.centerY) < 50
+        );
+        if (!isDuplicate) {
+            filtered.push(marker);
+        }
+    }
+    
+    if (filtered.length < 3) return [];
+    
+    // Find the three corners based on geometric positions
+    // Top-left: smallest x+y sum
+    // Top-right: largest x, smallest y  
+    // Bottom-left: smallest x, largest y
+    
+    let topLeft = filtered[0];
+    let topRight = filtered[0];
+    let bottomLeft = filtered[0];
+    
+    for (const marker of filtered) {
+        // Top-left has minimum x+y
+        if (marker.centerX + marker.centerY < topLeft.centerX + topLeft.centerY) {
+            topLeft = marker;
+        }
+        // Top-right has large x and small y
+        if (marker.centerX - marker.centerY > topRight.centerX - topRight.centerY) {
+            topRight = marker;
+        }
+        // Bottom-left has small x and large y
+        if (marker.centerY - marker.centerX > bottomLeft.centerY - bottomLeft.centerX) {
+            bottomLeft = marker;
+        }
+    }
+    
+    // Verify we have three distinct corners
+    const corners = [topLeft, topRight, bottomLeft];
+    const uniqueCorners = [];
+    
+    for (const corner of corners) {
+        const isDuplicate = uniqueCorners.some(c => 
+            Math.abs(c.centerX - corner.centerX) < 20 && 
+            Math.abs(c.centerY - corner.centerY) < 20
+        );
+        if (!isDuplicate) {
+            uniqueCorners.push(corner);
+        }
+    }
+    
+    if (uniqueCorners.length !== 3) {
+        return []; // Couldn't find 3 distinct corners
+    }
+    
+    return uniqueCorners;
+}
+
+function extractGrid(imageData, corners) {
+    const [topLeft, topRight, bottomLeft] = corners;
+    
+    // The white markers are OUTSIDE the 128x128 data grid
+    // The data grid starts at the bottom-right of top-left marker
+    const markerSize = topLeft.size || 60;
+    
+    const dataStartX = topLeft.x + markerSize;
+    const dataStartY = topLeft.y + markerSize;
+    
+    // Calculate data grid dimensions
+    const gridWidth = topRight.x - (topLeft.x + markerSize);
+    const gridHeight = bottomLeft.y - (topLeft.y + markerSize);
+    
+    if (gridWidth < 50 || gridHeight < 50) return null;
+    
+    const SIDE = 128;
+    const bits = [];
+    const blockWidth = gridWidth / SIDE;
+    const blockHeight = gridHeight / SIDE;
+    
+    for (let row = 0; row < SIDE; row++) {
+        for (let col = 0; col < SIDE; col++) {
+            const x = Math.floor(dataStartX + col * blockWidth + blockWidth / 2);
+            const y = Math.floor(dataStartY + row * blockHeight + blockHeight / 2);
+            
+            if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
+                const i = (y * imageData.width + x) * 4;
+                const brightness = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
+                bits.push(brightness < 128 ? '1' : '0');
+            } else {
+                bits.push('0');
+            }
+        }
+    }
+    
+    return bits.join('');
+}
+
+function decodeGrid(bitString) {
+    try {
+        // Convert bits to bytes
+        const bytes = [];
+        for (let i = 0; i < bitString.length; i += 8) {
+            const byte = parseInt(bitString.substr(i, 8), 2);
+            bytes.push(byte);
+        }
+        
+        // Check magic bytes "B2D1"
+        const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+        
+        if (magic !== 'B2D1') {
+            output.textContent += '\nInvalid magic bytes: ' + magic;
+            return;
+        }
+        
+        // Extract header
+        const total = (bytes[4] << 8) | bytes[5];
+        const index = (bytes[6] << 8) | bytes[7];
+        const length = (bytes[8] << 8) | bytes[9];
+        
+        // Extract data
+        const chunkData = bytes.slice(10, 10 + length);
+        
+        // Extract CRC (last 4 bytes of chunk)
+        const crcStart = 10 + length;
+        const crc = (bytes[crcStart] << 24) | (bytes[crcStart + 1] << 16) | 
+                    (bytes[crcStart + 2] << 8) | bytes[crcStart + 3];
+        
+        // Try to decode as text
+        let text = '';
+        for (let i = 0; i < chunkData.length; i++) {
+            const byte = chunkData[i];
+            if (byte >= 32 && byte <= 126) {
+                text += String.fromCharCode(byte);
+            } else {
+                text += '.';
+            }
+        }
+        
+        output.textContent = 'Decoded successfully! ✓\n\n' +
+            'Magic: ' + magic + ' ✓\n' +
+            'Total chunks: ' + total + '\n' +
+            'Current chunk: ' + index + '\n' +
+            'Data length: ' + length + '\n' +
+            'CRC: 0x' + crc.toString(16).padStart(8, '0') + '\n\n' +
+            'Decoded data:\n' + text.substring(0, 500);
+            
+    } catch (err) {
+        output.textContent += '\nDecode error: ' + err.message;
+    }
+}
+</script>
+
+</body>
+</html>
